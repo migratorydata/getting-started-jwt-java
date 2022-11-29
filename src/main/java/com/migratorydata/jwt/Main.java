@@ -36,12 +36,12 @@ public class Main {
     public static final StatusNotification TOKEN_INVALID = new StatusNotification("NOTIFY_TOKEN_INVALID", "NOTIFY_TOKEN_INVALID");
 
     private static final String backendEndpoint = "127.0.0.1:8080";
-    private static final String server = "demo.migratorydata.com:80";
+    private static final String migratoryDataServer = "127.0.0.1:8800";
     private static final String subject = "/server/status";
 
     public static void main(String[] args) throws Exception {
 
-        String token = loginAndGetToken();
+        String jwtToken = requestToken();
 
 		// create a MigratoryData client
 		final MigratoryDataClient client = new MigratoryDataClient();
@@ -58,7 +58,7 @@ public class Main {
 		}, MigratoryDataLogLevel.DEBUG);
 
 		// attach the entitlement token
-		client.setEntitlementToken(token);
+		client.setEntitlementToken(jwtToken);
 
 
 		// Define the listener to handle live message and status notifications
@@ -74,18 +74,19 @@ public class Main {
                         TOKEN_INVALID.getStatus().equals(status)) {
                     // invalid token or expired token
                     // renew token
-                    String newToken = loginAndGetToken();
-                    client.setEntitlementToken(newToken);
-                    client.subscribe(Arrays.asList(subject));
+					executor.schedule(() -> {
+						String newJwtToken = requestToken();
+						client.setEntitlementToken(newJwtToken);
+						client.subscribe(Arrays.asList(subject));	
+					}, 5, TimeUnit.SECONDS);
                 }
 
                 if (TOKEN_TO_EXPIRE.getStatus().equals(status)) {
                     // client token is about to expire
-                    // generate a new token and update server
-                    String newToken = loginAndGetToken();
-                    client.setEntitlementToken(newToken);
+                    // generate a new token and update migratoryData server with the new token.
+                    String newJwtToken = requestToken();
+                    client.setEntitlementToken(newJwtToken);
                 }
-
 			}
 
 			public void onMessage(MigratoryDataMessage message) {
@@ -95,7 +96,7 @@ public class Main {
 		});
 
 		// set server to connect to the MigratoryData server
-		client.setServers(new String[] { server });
+		client.setServers(new String[] { migratoryDataServer });
 
 		// subscribe
 		client.subscribe(Arrays.asList(subject));
@@ -119,11 +120,7 @@ public class Main {
 
     }
 
-    public static String loginAndGetToken() {
-        // curl -X POST http://127.0.0.1:8080/token/generate -H 'Content-Type: application/json' -d '{"username":"admin","password":"password", "ttlSeconds": 360000, "permissions": { "all" :["/server/status"]}}'
-        // login simulation 
-        // Http backend request for token
-        
+    public static String requestToken() {
         String payload = "{\"username\":\"admin\",\"password\":\"password\",\"ttlSeconds\":360000,\"permissions\":{\"all\":[\"/server/status\"]}}";
 
         StringEntity entity = new StringEntity(payload,
@@ -134,11 +131,12 @@ public class Main {
 			request.setEntity(entity);
 
 			HttpResponse response = client.execute(request);
-			System.out.println(response.getStatusLine().getStatusCode());
 			if (response.getStatusLine().getStatusCode() == 200) {
                 if (response.getEntity() != null) {
                     // return it as a String
-                    return parseResponse(EntityUtils.toString(response.getEntity()));
+					String jwtToken = parseResponse(EntityUtils.toString(response.getEntity()));
+					System.out.println("Jwt token: " + jwtToken);
+                    return jwtToken;
                 }
 			}
 		} catch (Exception e) {
